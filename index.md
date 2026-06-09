@@ -1,12 +1,12 @@
-
 ## Pytanie 1.
 
 > ***Opisz, jak aplikacja rozróżnia użytkowników o różnych uprawnieniach. Wskaż przykład sytuacji, w której jedna osoba może wykonać daną akcję, a inna nie powinna mieć do niej dostępu. Wyjaśnij, jak projekt to kontroluje.***
 
 Mam trzy rodzaje użytkowników: gościa, który nie jest zalogowany, zwykłego zalogowanego użytkownika i administratora. To, czy ktoś jest adminem, trzymam jako zwykłą kolumnę `is_admin` w tabeli users, a w modelu User mam do tego metodę:
 
+**Plik: app/Models/User.php (linie 31–35) — sprawdzenie, czy użytkownik jest administratorem**
+
 ```php
-// app/Models/User.php, linie 31–35
 // Czy to administrator
 public function isAdmin(): bool
 {
@@ -16,8 +16,9 @@ public function isAdmin(): bool
 
 Uprawnienia sprawdzam w dwóch miejscach. Cały panel admina chroni mój middleware — jak ktoś nie jest adminem, dostaje 403:
 
+**Plik: app/Http/Middleware/EnsureUserIsAdmin.php (linie 12–19) — ochrona całego panelu admina**
+
 ```php
-// app/Http/Middleware/EnsureUserIsAdmin.php, linie 12–19
 // Wpuszcza tylko administratora, reszcie zwraca 403
 public function handle(Request $request, Closure $next): Response
 {
@@ -31,8 +32,9 @@ public function handle(Request $request, Closure $next): Response
 
 A dostęp do konkretnego wydarzenia sprawdza polityka. Edytować można tylko swoje wydarzenie, ale admin każde:
 
+**Plik: app/Policies/ActivityPolicy.php (linie 10–14) — kto może edytować dane wydarzenie**
+
 ```php
-// app/Policies/ActivityPolicy.php, linie 10–14
 // Edycja: właściciel wydarzenia albo administrator
 public function update(User $user, Activity $activity): bool
 {
@@ -50,10 +52,11 @@ Przykład: Jan próbuje wejść w edycję wydarzenia Anny. Nie jest właściciel
 
 Opiszę dodanie wydarzenia, bo to przechodzi przez wszystkie warstwy.
 
-Najpierw użytkownik wypełnia formularz w przeglądarce i klika „Zapisz”. Formularz idzie metodą POST i ma token CSRF, który chroni przed wysłaniem go z obcej strony. To jest etap przechwycenia danych z formularza (warstwa widoku):
+Najpierw użytkownik wypełnia formularz w przeglądarce i klika „Zapisz”. Formularz idzie metodą POST i ma token CSRF, który chroni przed wysłaniem go z obcej strony.
+
+**Fragment 1 – przechwycenie danych z formularza (resources/views/activities/_form.blade.php, linie 7–23)**
 
 ```blade
-{{-- resources/views/activities/_form.blade.php, linie 7–23 — przechwycenie danych z formularza --}}
 <form action="{{ $action }}" method="POST" class="space-y-5">
     @csrf
     @if ($method === 'PUT')
@@ -73,10 +76,11 @@ Najpierw użytkownik wypełnia formularz w przeglądarce i klika „Zapisz”. F
     </div>
 ```
 
-Potem Laravel po adresie i metodzie HTTP znajduje pasującą trasę. Trasa zapisu jest w grupie auth, więc niezalogowany w ogóle tu nie wejdzie. To warstwa routingu:
+Potem Laravel po adresie i metodzie HTTP znajduje pasującą trasę. Trasa zapisu jest w grupie auth, więc niezalogowany w ogóle tu nie wejdzie.
+
+**Fragment 2 – dopasowanie trasy / routing (routes/web.php, linie 28–46)**
 
 ```php
-// routes/web.php, linie 28–46 — routing, dopasowanie żądania do akcji kontrolera
 Route::middleware('auth')->group(function () {
     // Moje wydarzenia (utworzone + te, do których dołączyłem)
     Route::get('/moje-wydarzenia', [ActivityController::class, 'mine'])->name('activities.mine');
@@ -98,10 +102,11 @@ Route::middleware('auth')->group(function () {
 });
 ```
 
-Żądanie trafia do metody store w kontrolerze. To główna logika akcji — sprawdzam, że to nie admin, oddaję dane do walidacji, a organizatora i status ustawiam sam, bo nie biorę ich z formularza:
+Żądanie trafia do metody store w kontrolerze. To główna logika akcji — sprawdzam, że to nie admin, oddaję dane do walidacji, a organizatora i status ustawiam sam, bo nie biorę ich z formularza.
+
+**Fragment 3 – główna logika biznesowa (app/Http/Controllers/ActivityController.php, linie 82–100)**
 
 ```php
-// app/Http/Controllers/ActivityController.php, linie 82–100 — główna logika biznesowa
 // Zapis nowego wydarzenia – trafia do akceptacji (status: pending)
 public function store(Request $request)
 {
@@ -123,10 +128,11 @@ public function store(Request $request)
 }
 ```
 
-Zanim coś zapiszę, dane idą przez walidację. Jak coś jest źle, Laravel sam zawraca do formularza i nic nie zapisuje:
+Zanim coś zapiszę, dane idą przez walidację. Jak coś jest źle, Laravel sam zawraca do formularza i nic nie zapisuje.
+
+**Fragment 4 – sprawdzenie poprawności danych / walidacja (app/Http/Controllers/ActivityController.php, linie 188–220)**
 
 ```php
-// app/Http/Controllers/ActivityController.php, linie 188–220 — sprawdzenie poprawności danych
 // Walidacja danych wydarzenia (wspólna dla dodawania i edycji)
 private function validateActivity(Request $request): array
 {
@@ -162,10 +168,11 @@ private function validateActivity(Request $request): array
 }
 ```
 
-Sam zapis robi `save()` na modelu — to operacja zapisu do bazy. Model ma listę pól fillable, czyli tych, które wolno ustawić z formularza. `user_id` i `status` celowo tu nie ma, żeby nikt nie podstawił sobie cudzego właściciela albo nie zatwierdził wydarzenia z pominięciem moderacji:
+Sam zapis robi `save()` na modelu — to operacja zapisu do bazy. Model ma listę pól fillable, czyli tych, które wolno ustawić z formularza. `user_id` i `status` celowo tu nie ma, żeby nikt nie podstawił sobie cudzego właściciela albo nie zatwierdził wydarzenia z pominięciem moderacji.
+
+**Fragment 5 – pola dozwolone przy zapisie do bazy (app/Models/Activity.php, linie 18–28)**
 
 ```php
-// app/Models/Activity.php, linie 18–28 — model i pola dozwolone przy zapisie do bazy
 // Pola, które można zapisać z formularza (user_id i status ustawiam w kontrolerze)
 protected $fillable = [
     'category_id',
@@ -193,8 +200,9 @@ Sprawdzam między innymi, czy nazwa jest podana i ma co najmniej 5 znaków, czy 
 
 Jak coś jest źle, Laravel nie zapisuje i zawraca do formularza, a pod danym polem pokazuje mój polski komunikat, na przykład „Data wydarzenia musi być z przyszłości”. Wpisane wcześniej dane nie znikają, bo w formularzu używam funkcji `old`. Komunikaty pokazuję wspólnym komponentem:
 
+**Plik: resources/views/components/input-error.blade.php (linie 1–9) — wyświetlanie błędów pod polem**
+
 ```blade
-{{-- resources/views/components/input-error.blade.php, linie 1–9 --}}
 @props(['messages'])
 
 @if ($messages)
@@ -216,8 +224,9 @@ Najlepiej zorganizowany jest u mnie formularz wydarzenia, czyli plik resources/v
 
 Jest czytelny, bo pola są pogrupowane, a powtarzające się klasy stylów trzymam w zmiennych na górze pliku, więc wszystko wygląda spójnie i zmieniam to w jednym miejscu:
 
+**Plik: resources/views/activities/_form.blade.php (linie 2–5) — wspólne klasy stylów w jednym miejscu**
+
 ```blade
-{{-- resources/views/activities/_form.blade.php, linie 2–5 --}}
 @php
     $inputClass = 'w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition';
     $labelClass = 'block text-sm font-semibold text-slate-700 mb-1.5';
@@ -226,8 +235,9 @@ Jest czytelny, bo pola są pogrupowane, a powtarzające się klasy stylów trzym
 
 Nie powtarza kodu, bo logikę formularza mam raz, a błędy wszędzie pokazuję tym samym komponentem. Łatwo go też rozbudować — jak ostatnio musiałem dodać ukryte pole z adresem powrotu, dopisałem to jednym warunkiem i od razu działało we wszystkich miejscach, gdzie ten formularz jest używany:
 
+**Plik: resources/views/activities/_form.blade.php (linie 13–16) — łatwe dodanie nowego pola**
+
 ```blade
-{{-- resources/views/activities/_form.blade.php, linie 13–16 --}}
 {{-- Adres powrotu – żeby po zapisie wrócić tam, skąd otwarto formularz --}}
 @isset($redirectTo)
     <input type="hidden" name="redirect_to" value="{{ $redirectTo }}">
@@ -242,8 +252,9 @@ Nie powtarza kodu, bo logikę formularza mam raz, a błędy wszędzie pokazuję 
 
 Najważniejsze, czego nie widać wprost, to scope’y w modelu Activity i to, że część pól ustawiam sam, zamiast brać je z formularza. Na stronie głównej widać tylko listę wydarzeń, ale w tle każde zapytanie przechodzi przez `approved` i `upcoming`, więc gość nigdy nie zobaczy wydarzeń oczekujących, odrzuconych ani tych z przeszłości:
 
+**Plik: app/Models/Activity.php (linie 56–72) — filtrowanie wyników (scope zapytań)**
+
 ```php
-// app/Models/Activity.php, linie 56–72 — filtrowanie wyników (scope zapytań)
 // --- Skróty do zapytań (scope), np. Activity::approved() ---
 
 public function scopeApproved(Builder $query): Builder
@@ -263,7 +274,7 @@ public function scopeUpcoming(Builder $query): Builder
 }
 ```
 
-Druga rzecz to automatyczne ustawianie organizatora i statusu przy zapisie (widać to w metodzie store w pytaniu 2, linie 92–94). Użytkownik nie ma tych pól w formularzu, ustawiam je w kontrolerze. To ważne dla bezpieczeństwa, bo inaczej ktoś mógłby podstawić cudze konto jako właściciela albo od razu zatwierdzić sobie wydarzenie bez admina. Bez tego cała moderacja by nie działała.
+Druga rzecz to automatyczne ustawianie organizatora i statusu przy zapisie (widać to w metodzie store w pytaniu 2). Użytkownik nie ma tych pól w formularzu, ustawiam je w kontrolerze. To ważne dla bezpieczeństwa, bo inaczej ktoś mógłby podstawić cudze konto jako właściciela albo od razu zatwierdzić sobie wydarzenie bez admina. Bez tego cała moderacja by nie działała.
 
 ---
 
@@ -273,8 +284,9 @@ Druga rzecz to automatyczne ustawianie organizatora i statusu przy zapisie (wida
 
 Rozpoznaje to po adresie strony i metodzie HTTP, które dopasowuje do trasy w routes/web.php. Ten sam zasób obsługuję różnie zależnie od metody: GET na adres wydarzenia to wyświetlenie (metoda show), POST na /wydarzenia to utworzenie (store), PUT na konkretne wydarzenie to zapis edycji (update), a DELETE to usunięcie (destroy). Widać to w tych trasach:
 
+**Plik: routes/web.php (linie 33–37) — różne akcje na tym samym zasobie wg metody HTTP**
+
 ```php
-// routes/web.php, linie 33–37 — różne akcje na tym samym zasobie wg metody HTTP
 Route::get('/wydarzenia/nowe', [ActivityController::class, 'create'])->name('activities.create');
 Route::post('/wydarzenia', [ActivityController::class, 'store'])->name('activities.store');
 Route::get('/wydarzenia/{activity}/edytuj', [ActivityController::class, 'edit'])->name('activities.edit');
@@ -282,7 +294,7 @@ Route::put('/wydarzenia/{activity}', [ActivityController::class, 'update'])->nam
 Route::delete('/wydarzenia/{activity}', [ActivityController::class, 'destroy'])->name('activities.destroy');
 ```
 
-Formularz HTML umie wysłać tylko GET albo POST, więc przy edycji i usuwaniu używam w formularzu dyrektywy `@method('PUT')` albo `@method('DELETE')`, a Laravel czyta to ukryte pole i kieruje żądanie do właściwej metody kontrolera (widać to w formularzu w pytaniu 2, linie 9–11). Dodatkowo dzięki route model binding parametr `{activity}` w adresie sprawia, że Laravel sam pobiera odpowiednie wydarzenie z bazy po jego ID i podaje mi je do metody jako gotowy obiekt.
+Formularz HTML umie wysłać tylko GET albo POST, więc przy edycji i usuwaniu używam w formularzu dyrektywy `@method('PUT')` albo `@method('DELETE')`, a Laravel czyta to ukryte pole i kieruje żądanie do właściwej metody kontrolera. Dodatkowo dzięki route model binding parametr `{activity}` w adresie sprawia, że Laravel sam pobiera odpowiednie wydarzenie z bazy po jego ID i podaje mi je do metody jako gotowy obiekt.
 
 ---
 
@@ -294,8 +306,9 @@ Biorę powiązanie użytkownik i jego wydarzenia, czyli jeden do wielu. Jeden u�
 
 W bazie widać to jako kolumnę `user_id` w tabeli activities, która jest kluczem obcym wskazującym na `users.id`. W kodzie opisuję to z obu stron:
 
+**Plik: app/Models/Activity.php (linie 44–48) — strona „wydarzenie należy do użytkownika”**
+
 ```php
-// app/Models/Activity.php, linie 44–48 — strona „wydarzenie należy do użytkownika”
 // Organizator (twórca wydarzenia)
 public function organizer()
 {
@@ -303,8 +316,9 @@ public function organizer()
 }
 ```
 
+**Plik: app/Models/User.php (linie 37–41) — strona „użytkownik ma wiele wydarzeń”**
+
 ```php
-// app/Models/User.php, linie 37–41 — strona „użytkownik ma wiele wydarzeń”
 // Wydarzenia utworzone przez użytkownika
 public function createdActivities()
 {
@@ -314,8 +328,9 @@ public function createdActivities()
 
 W widoku korzystam z tego, pokazując imię organizatora przez `$activity->organizer->name`, a w „Moich wydarzeniach” listuję wszystkie wydarzenia danego użytkownika. Mam też trudniejszą relację wiele do wielu, czyli uczestnicy zapisani na wydarzenia, opartą o tabelę pośrednią activity_user:
 
+**Plik: app/Models/Activity.php (linie 50–54) — relacja wiele-do-wielu (uczestnicy)**
+
 ```php
-// app/Models/Activity.php, linie 50–54 — relacja wiele-do-wielu (uczestnicy)
 // Zapisani uczestnicy
 public function participants()
 {
@@ -331,8 +346,9 @@ public function participants()
 
 Aplikacja w kilku miejscach radzi sobie z dziwnymi sytuacjami. Pierwsza to próba wejścia na wydarzenie, którego nie powinno się widzieć. Jak gość zna ID wydarzenia, które dopiero czeka na akceptację, i wejdzie na jego stronę, to w metodzie show sprawdzam, że nie jest zaakceptowane, i zwracam 404. Daję 404 zamiast 403 specjalnie, żeby nie zdradzać, że taki zasób w ogóle istnieje:
 
+**Plik: app/Http/Controllers/ActivityController.php (linie 57–68) — ukrycie niezaakceptowanych wydarzeń**
+
 ```php
-// app/Http/Controllers/ActivityController.php, linie 57–68
 // Szczegóły wydarzenia (niezaakceptowane widzi tylko właściciel lub admin)
 public function show(Activity $activity)
 {
@@ -385,8 +401,9 @@ Baza danych projektu działa na SQLite (plik database/database.sqlite). Struktur
 
 Przykładem jest tabela `activities`, czyli wydarzenia. Tworzy ją ta migracja:
 
+**Plik: database/migrations/2026_05_31_124703_create_activities_table.php (linie 14–28) — utworzenie tabeli wydarzeń**
+
 ```php
-// database/migrations/2026_05_31_124703_create_activities_table.php, linie 14–28
 Schema::create('activities', function (Blueprint $table) {
     $table->id();
     
@@ -406,8 +423,9 @@ Schema::create('activities', function (Blueprint $table) {
 
 Najważniejsze pola to `id` (klucz główny), `category_id` (klucz obcy do dyscypliny), `title` (nazwa wydarzenia), `location` (miasto), `date` (data i godzina) oraz `skill_level` (poziom). Później dołożyłem osobną migracją jeszcze `user_id`, czyli organizatora, i `status` (oczekuje, zaakceptowane, odrzucone), bo to doszło razem z rolami i moderacją:
 
+**Plik: database/migrations/2026_06_06_120000_add_owner_and_status_to_activities_table.php (linie 14–20) — dodanie organizatora i statusu moderacji**
+
 ```php
-// database/migrations/2026_06_06_120000_add_owner_and_status_to_activities_table.php, linie 14–20
 Schema::table('activities', function (Blueprint $table) {
     // Twórca/organizator wydarzenia. Usunięcie konta usuwa też jego wydarzenia.
     $table->foreignId('user_id')->nullable()->after('id')->constrained()->cascadeOnDelete();
@@ -425,10 +443,11 @@ Przykładowe dane biorą się z seederów, czyli plików w database/seeders. Po 
 
 > ***Wyjaśnij, jak projekt zabezpiecza formularze przed niepożądanym lub przypadkowym wysłaniem danych z zewnątrz. Wskaż konkretny formularz i opisz, jaki mechanizm sprawia, że aplikacja rozpoznaje, czy żądanie pochodzi z poprawnej strony.***
 
-Wszystkie moje formularze, które zmieniają dane, są zabezpieczone tokenem CSRF. W każdym formularzu jest dyrektywa `@csrf`, która dodaje ukryte pole z losowym tokenem przypisanym do sesji użytkownika. Przykład z formularza dodawania wydarzenia w pliku resources/views/activities/_form.blade.php:
+Wszystkie moje formularze, które zmieniają dane, są zabezpieczone tokenem CSRF. W każdym formularzu jest dyrektywa `@csrf`, która dodaje ukryte pole z losowym tokenem przypisanym do sesji użytkownika. Przykład z formularza dodawania wydarzenia:
+
+**Plik: resources/views/activities/_form.blade.php (linie 7–11) — token CSRF w formularzu**
 
 ```blade
-{{-- resources/views/activities/_form.blade.php, linie 7–11 --}}
 <form action="{{ $action }}" method="POST" class="space-y-5">
     @csrf
     @if ($method === 'PUT')
