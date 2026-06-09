@@ -1,4 +1,3 @@
-<h1 align="center">Dokumentacja Projektu - SportMatch</h1>
 
 ## Pytanie 1.
 
